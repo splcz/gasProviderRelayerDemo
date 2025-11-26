@@ -144,7 +144,7 @@ curl -X POST https://gas-provider-relayer.vercel.app/relay \
 
 ## 3. 激活 Permit 额度授权
 
-执行 EIP-2612 `permit` 函数，激活用户的额度授权。
+执行 ERC-2612 `permit` 函数，激活用户的额度授权。
 
 **特点**：用户签名一次，可在额度内多次转账。
 
@@ -347,7 +347,7 @@ curl https://gas-provider-relayer.vercel.app/allowance/0xUserAddress...
 ┌──────────────────────────────────────────────────────────────────┐
 │ 步骤 1: 用户签署 Permit（链下，0 Gas）                            │
 │ ┌─────────────────────────────────────────────────────────────┐  │
-│ │ 签署 EIP-2612 Permit                                        │  │
+│ │ 签署 ERC-2612 Permit                                        │  │
 │ │ - owner: 用户地址                                           │  │
 │ │ - spender: Relayer 地址                                     │  │
 │ │ - value: 10 USDC (授权额度)                                 │  │
@@ -377,7 +377,7 @@ curl https://gas-provider-relayer.vercel.app/allowance/0xUserAddress...
 
 ## EIP-712 签名示例
 
-### Permit 签名 (EIP-2612)
+### Permit 签名 (ERC-2612)
 
 ```javascript
 import { createWalletClient, http } from 'viem'
@@ -501,5 +501,5 @@ USDC 使用 6 位小数：
 - **服务地址**: https://gas-provider-relayer.vercel.app
 - **USDC 合约**: [0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48](https://etherscan.io/address/0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48)
 - **ERC-3009 标准**: https://eips.ethereum.org/EIPS/eip-3009
-- **EIP-2612 (Permit)**: https://eips.ethereum.org/EIPS/eip-2612
+- **ERC-2612 (Permit)**: https://eips.ethereum.org/EIPS/eip-2612
 - **EIP-712 标准**: https://eips.ethereum.org/EIPS/eip-712

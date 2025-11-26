@@ -40,7 +40,7 @@ const USDC_ABI = [
     ],
     outputs: [{ name: '', type: 'bool' }],
   },
-  // EIP-2612: permit
+  // ERC-2612: permit
   {
     name: 'permit',
     type: 'function',
