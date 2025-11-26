@@ -41,35 +41,47 @@ const USDC_ABI = [
   },
 ]
 
-// 检查必要的环境变量
+// 环境变量
 const RELAYER_PRIVATE_KEY = process.env.RELAYER_PRIVATE_KEY
 const RPC_URL = process.env.RPC_URL || 'https://eth.llamarpc.com'
 
-if (!RELAYER_PRIVATE_KEY) {
-  console.error('❌ 错误: 请在 .env 文件中设置 RELAYER_PRIVATE_KEY')
-  console.error('   格式: RELAYER_PRIVATE_KEY=0x...')
-  process.exit(1)
+// 延迟初始化客户端（用于 Serverless 环境）
+let relayerAccount = null
+let publicClient = null
+let walletClient = null
+
+function initClients() {
+  if (!RELAYER_PRIVATE_KEY) {
+    throw new Error('RELAYER_PRIVATE_KEY 环境变量未设置')
+  }
+  
+  if (!relayerAccount) {
+    relayerAccount = privateKeyToAccount(RELAYER_PRIVATE_KEY)
+    console.log(`✅ Relayer 地址: ${relayerAccount.address}`)
+  }
+  
+  if (!publicClient) {
+    publicClient = createPublicClient({
+      chain: mainnet,
+      transport: http(RPC_URL),
+    })
+  }
+  
+  if (!walletClient) {
+    walletClient = createWalletClient({
+      account: relayerAccount,
+      chain: mainnet,
+      transport: http(RPC_URL),
+    })
+  }
+  
+  return { relayerAccount, publicClient, walletClient }
 }
-
-// 创建 Relayer 账户
-const relayerAccount = privateKeyToAccount(RELAYER_PRIVATE_KEY)
-console.log(`✅ Relayer 地址: ${relayerAccount.address}`)
-
-// 创建客户端
-const publicClient = createPublicClient({
-  chain: mainnet,
-  transport: http(RPC_URL),
-})
-
-const walletClient = createWalletClient({
-  account: relayerAccount,
-  chain: mainnet,
-  transport: http(RPC_URL),
-})
 
 // 健康检查
 app.get('/health', async (req, res) => {
   try {
+    const { relayerAccount, publicClient } = initClients()
     const balance = await publicClient.getBalance({ address: relayerAccount.address })
     res.json({
       status: 'ok',
@@ -85,6 +97,7 @@ app.get('/health', async (req, res) => {
 // 执行 transferWithAuthorization
 app.post('/relay', async (req, res) => {
   try {
+    const { publicClient, walletClient } = initClients()
     const { from, to, value, validAfter, validBefore, nonce, v, r, s } = req.body
 
     // 参数验证
@@ -141,9 +154,12 @@ app.post('/relay', async (req, res) => {
 
     console.log(`✅ 交易已提交: ${hash}`)
 
-    // 等待交易确认
+    // 等待交易确认（设置超时以适应 Serverless 环境）
     console.log('⏳ 等待交易确认...')
-    const receipt = await publicClient.waitForTransactionReceipt({ hash })
+    const receipt = await publicClient.waitForTransactionReceipt({ 
+      hash,
+      timeout: 45_000, // 45秒超时，适应 Vercel 限制
+    })
     
     console.log(`✅ 交易已确认! 区块: ${receipt.blockNumber}`)
 
@@ -163,12 +179,18 @@ app.post('/relay', async (req, res) => {
   }
 })
 
-// 启动服务器
-const PORT = process.env.PORT || 3001
-app.listen(PORT, () => {
-  console.log(`\n🚀 中继服务已启动: http://localhost:${PORT}`)
-  console.log(`   健康检查: http://localhost:${PORT}/health`)
-  console.log(`   中继接口: POST http://localhost:${PORT}/relay`)
-  console.log('\n⚠️  确保 Relayer 钱包有足够的 ETH 支付 Gas!')
-})
+// 本地开发时启动服务器
+// Vercel 环境下不需要 listen，直接导出 app
+if (process.env.NODE_ENV !== 'production' && !process.env.VERCEL) {
+  const PORT = process.env.PORT || 3001
+  app.listen(PORT, () => {
+    console.log(`\n🚀 中继服务已启动: http://localhost:${PORT}`)
+    console.log(`   健康检查: http://localhost:${PORT}/health`)
+    console.log(`   中继接口: POST http://localhost:${PORT}/relay`)
+    console.log('\n⚠️  确保 Relayer 钱包有足够的 ETH 支付 Gas!')
+  })
+}
+
+// 导出 app 供 Vercel 使用
+export default app
 

@@ -158,12 +158,54 @@ const message = {
 }
 ```
 
+## Vercel 部署
+
+本项目已配置好 Vercel 部署支持。
+
+### 部署步骤
+
+1. **Fork 或导入仓库到 Vercel**
+   - 访问 [vercel.com](https://vercel.com)
+   - 点击 "New Project" → 导入 GitHub 仓库
+
+2. **配置环境变量**
+
+   在 Vercel 项目设置 → Environment Variables 中添加：
+
+   | 变量名 | 值 | 说明 |
+   |--------|-----|------|
+   | `RELAYER_PRIVATE_KEY` | `0x...` | Relayer 钱包私钥 |
+   | `RPC_URL` | `https://...` | 以太坊 RPC 端点 (可选) |
+
+3. **部署**
+   - Vercel 会自动检测配置并部署
+   - 部署完成后获得 `https://your-project.vercel.app`
+
+### Vercel 限制说明
+
+- **函数超时**: Vercel Hobby 计划限制 10 秒，Pro 计划 60 秒
+- 本项目已设置 45 秒超时等待交易确认
+- 如遇到超时，建议升级到 Pro 计划或使用其他部署方案
+
+### 测试部署
+
+```bash
+# 健康检查
+curl https://your-project.vercel.app/health
+
+# 中继请求
+curl -X POST https://your-project.vercel.app/relay \
+  -H "Content-Type: application/json" \
+  -d '{"from":"0x...","to":"0x...","value":"1000000",...}'
+```
+
 ## 注意事项
 
 1. **私钥安全**: 永远不要将真实私钥提交到版本控制
 2. **Relayer 余额**: 确保 Relayer 钱包有足够的 ETH 支付 Gas 费用
 3. **RPC 端点**: 生产环境建议使用付费的 RPC 服务（Infura、Alchemy 等）
 4. **费用模型**: 实际生产中应考虑向用户收取服务费以覆盖 Gas 成本
+5. **Vercel 超时**: Serverless 函数有执行时间限制，交易确认可能超时
 
 ## 相关链接
 
