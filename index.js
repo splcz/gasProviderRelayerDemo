@@ -12,6 +12,7 @@ app.use(express.json())
 // USDC 合约配置
 const USDC_ADDRESS = '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'
 const USDC_ABI = [
+  // ERC-3009: transferWithAuthorization
   {
     name: 'transferWithAuthorization',
     type: 'function',
@@ -38,6 +39,53 @@ const USDC_ABI = [
       { name: 'nonce', type: 'bytes32' },
     ],
     outputs: [{ name: '', type: 'bool' }],
+  },
+  // EIP-2612: permit
+  {
+    name: 'permit',
+    type: 'function',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'owner', type: 'address' },
+      { name: 'spender', type: 'address' },
+      { name: 'value', type: 'uint256' },
+      { name: 'deadline', type: 'uint256' },
+      { name: 'v', type: 'uint8' },
+      { name: 'r', type: 'bytes32' },
+      { name: 's', type: 'bytes32' },
+    ],
+    outputs: [],
+  },
+  // ERC-20: allowance
+  {
+    name: 'allowance',
+    type: 'function',
+    stateMutability: 'view',
+    inputs: [
+      { name: 'owner', type: 'address' },
+      { name: 'spender', type: 'address' },
+    ],
+    outputs: [{ name: '', type: 'uint256' }],
+  },
+  // ERC-20: transferFrom
+  {
+    name: 'transferFrom',
+    type: 'function',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'from', type: 'address' },
+      { name: 'to', type: 'address' },
+      { name: 'value', type: 'uint256' },
+    ],
+    outputs: [{ name: '', type: 'bool' }],
+  },
+  // ERC-20: balanceOf
+  {
+    name: 'balanceOf',
+    type: 'function',
+    stateMutability: 'view',
+    inputs: [{ name: 'account', type: 'address' }],
+    outputs: [{ name: '', type: 'uint256' }],
   },
 ]
 
@@ -179,6 +227,197 @@ app.post('/relay', async (req, res) => {
   }
 })
 
+// 执行 permit - 激活额度授权
+app.post('/permit', async (req, res) => {
+  try {
+    const { publicClient, walletClient } = initClients()
+    const { owner, spender, value, deadline, v, r, s } = req.body
+
+    // 参数验证
+    if (!owner || !spender || !value || !deadline || !v || !r || !s) {
+      return res.status(400).json({ error: '缺少必要参数' })
+    }
+
+    console.log('\n📨 收到 permit 请求:')
+    console.log(`   Owner: ${owner}`)
+    console.log(`   Spender: ${spender}`)
+    console.log(`   Value: ${value}`)
+    console.log(`   Deadline: ${deadline}`)
+
+    // 检查 deadline
+    const now = Math.floor(Date.now() / 1000)
+    if (BigInt(deadline) < BigInt(now)) {
+      return res.status(400).json({ error: 'Permit 已过期' })
+    }
+
+    // 执行 permit
+    console.log('⏳ 正在提交 permit 交易...')
+    
+    const hash = await walletClient.writeContract({
+      address: USDC_ADDRESS,
+      abi: USDC_ABI,
+      functionName: 'permit',
+      args: [
+        owner,
+        spender,
+        BigInt(value),
+        BigInt(deadline),
+        v,
+        r,
+        s,
+      ],
+    })
+
+    console.log(`✅ Permit 交易已提交: ${hash}`)
+
+    // 等待交易确认
+    console.log('⏳ 等待交易确认...')
+    const receipt = await publicClient.waitForTransactionReceipt({ 
+      hash,
+      timeout: 45_000,
+    })
+    
+    console.log(`✅ Permit 已确认! 区块: ${receipt.blockNumber}`)
+
+    res.json({
+      success: true,
+      hash,
+      blockNumber: receipt.blockNumber.toString(),
+      gasUsed: receipt.gasUsed.toString(),
+    })
+
+  } catch (error) {
+    console.error('❌ Permit 失败:', error.message)
+    res.status(500).json({ 
+      error: error.message || 'Permit 执行失败',
+      details: error.shortMessage || error.cause?.message,
+    })
+  }
+})
+
+// 执行 transferFrom - 在已授权额度内转账
+app.post('/transfer', async (req, res) => {
+  try {
+    const { relayerAccount, publicClient, walletClient } = initClients()
+    const { from, to, value } = req.body
+
+    // 参数验证
+    if (!from || !to || !value) {
+      return res.status(400).json({ error: '缺少必要参数' })
+    }
+
+    console.log('\n📨 收到 transfer 请求:')
+    console.log(`   From: ${from}`)
+    console.log(`   To: ${to}`)
+    console.log(`   Value: ${value}`)
+
+    // 检查 allowance
+    const allowance = await publicClient.readContract({
+      address: USDC_ADDRESS,
+      abi: USDC_ABI,
+      functionName: 'allowance',
+      args: [from, relayerAccount.address],
+    })
+
+    console.log(`   Allowance: ${allowance}`)
+
+    if (BigInt(allowance) < BigInt(value)) {
+      return res.status(400).json({ 
+        error: '授权额度不足',
+        allowance: allowance.toString(),
+        required: value,
+      })
+    }
+
+    // 检查用户余额
+    const balance = await publicClient.readContract({
+      address: USDC_ADDRESS,
+      abi: USDC_ABI,
+      functionName: 'balanceOf',
+      args: [from],
+    })
+
+    if (BigInt(balance) < BigInt(value)) {
+      return res.status(400).json({ 
+        error: '用户 USDC 余额不足',
+        balance: balance.toString(),
+        required: value,
+      })
+    }
+
+    // 执行 transferFrom
+    console.log('⏳ 正在提交 transferFrom 交易...')
+    
+    const hash = await walletClient.writeContract({
+      address: USDC_ADDRESS,
+      abi: USDC_ABI,
+      functionName: 'transferFrom',
+      args: [
+        from,
+        to,
+        BigInt(value),
+      ],
+    })
+
+    console.log(`✅ TransferFrom 交易已提交: ${hash}`)
+
+    // 等待交易确认
+    console.log('⏳ 等待交易确认...')
+    const receipt = await publicClient.waitForTransactionReceipt({ 
+      hash,
+      timeout: 45_000,
+    })
+    
+    console.log(`✅ TransferFrom 已确认! 区块: ${receipt.blockNumber}`)
+
+    // 查询剩余 allowance
+    const remainingAllowance = await publicClient.readContract({
+      address: USDC_ADDRESS,
+      abi: USDC_ABI,
+      functionName: 'allowance',
+      args: [from, relayerAccount.address],
+    })
+
+    res.json({
+      success: true,
+      hash,
+      blockNumber: receipt.blockNumber.toString(),
+      gasUsed: receipt.gasUsed.toString(),
+      remainingAllowance: remainingAllowance.toString(),
+    })
+
+  } catch (error) {
+    console.error('❌ TransferFrom 失败:', error.message)
+    res.status(500).json({ 
+      error: error.message || 'TransferFrom 执行失败',
+      details: error.shortMessage || error.cause?.message,
+    })
+  }
+})
+
+// 查询 allowance
+app.get('/allowance/:owner', async (req, res) => {
+  try {
+    const { relayerAccount, publicClient } = initClients()
+    const { owner } = req.params
+
+    const allowance = await publicClient.readContract({
+      address: USDC_ADDRESS,
+      abi: USDC_ABI,
+      functionName: 'allowance',
+      args: [owner, relayerAccount.address],
+    })
+
+    res.json({
+      owner,
+      spender: relayerAccount.address,
+      allowance: allowance.toString(),
+    })
+  } catch (error) {
+    res.status(500).json({ error: error.message })
+  }
+})
+
 // 本地开发时启动服务器
 // Vercel 环境下不需要 listen，直接导出 app
 if (process.env.NODE_ENV !== 'production' && !process.env.VERCEL) {
@@ -186,7 +425,10 @@ if (process.env.NODE_ENV !== 'production' && !process.env.VERCEL) {
   app.listen(PORT, () => {
     console.log(`\n🚀 中继服务已启动: http://localhost:${PORT}`)
     console.log(`   健康检查: http://localhost:${PORT}/health`)
-    console.log(`   中继接口: POST http://localhost:${PORT}/relay`)
+    console.log(`   ERC-3009 中继: POST http://localhost:${PORT}/relay`)
+    console.log(`   Permit 激活: POST http://localhost:${PORT}/permit`)
+    console.log(`   额度内转账: POST http://localhost:${PORT}/transfer`)
+    console.log(`   查询额度: GET http://localhost:${PORT}/allowance/:owner`)
     console.log('\n⚠️  确保 Relayer 钱包有足够的 ETH 支付 Gas!')
   })
 }
