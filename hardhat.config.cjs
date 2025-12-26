@@ -23,7 +23,7 @@ module.exports = {
     },
     // Sepolia 测试网
     sepolia: {
-      url: process.env.SEPOLIA_RPC_URL || "https://ethereum-sepolia-rpc.publicnode.com",
+      url: process.env.SEPOLIA_RPC_URL || "https://eth-sepolia.g.alchemy.com/v2/JDtZbw6v54UHv874deptO",
       accounts: process.env.RELAYER_PRIVATE_KEY 
         ? [process.env.RELAYER_PRIVATE_KEY] 
         : [],

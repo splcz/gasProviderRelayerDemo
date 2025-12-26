@@ -25,7 +25,7 @@ const NETWORK_CONFIG = {
     chain: sepolia,
     usdc: '0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238',
     paymaster: process.env.PAYMASTER_ADDRESS_SEPOLIA || '0x217fe9B8129b830D50Bcd51b0eD831E61f6b571e',
-    rpc: process.env.SEPOLIA_RPC_URL || 'https://ethereum-sepolia-rpc.publicnode.com',
+    rpc: process.env.SEPOLIA_RPC_URL || 'https://eth-sepolia.g.alchemy.com/v2/JDtZbw6v54UHv874deptO',
   },
 }
 
