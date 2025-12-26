@@ -3,19 +3,43 @@ import express from 'express'
 import cors from 'cors'
 import { createPublicClient, createWalletClient, http } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
-import { mainnet } from 'viem/chains'
+import { mainnet, sepolia } from 'viem/chains'
 
 const app = express()
 app.use(cors())
 app.use(express.json())
 
-// USDC 合约配置
-const USDC_ADDRESS = '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'
+// ============ 多网络配置 ============
+// 通过环境变量 NETWORK 切换：'mainnet' 或 'sepolia'
+const NETWORK = process.env.NETWORK || 'sepolia'
 
-// Paymaster 合约配置
-// Sepolia: 0x217fe9B8129b830D50Bcd51b0eD831E61f6b571e
-// Mainnet: 部署后更新
-const PAYMASTER_ADDRESS = process.env.PAYMASTER_ADDRESS || '0x217fe9B8129b830D50Bcd51b0eD831E61f6b571e'
+// 网络配置映射
+const NETWORK_CONFIG = {
+  mainnet: {
+    chain: mainnet,
+    usdc: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+    paymaster: process.env.PAYMASTER_ADDRESS_MAINNET || '0x0000000000000000000000000000000000000000',
+    rpc: process.env.RPC_URL || 'https://eth.llamarpc.com',
+  },
+  sepolia: {
+    chain: sepolia,
+    usdc: '0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238',
+    paymaster: process.env.PAYMASTER_ADDRESS_SEPOLIA || '0x217fe9B8129b830D50Bcd51b0eD831E61f6b571e',
+    rpc: process.env.SEPOLIA_RPC_URL || 'https://ethereum-sepolia-rpc.publicnode.com',
+  },
+}
+
+// 当前网络配置
+const currentConfig = NETWORK_CONFIG[NETWORK] || NETWORK_CONFIG.sepolia
+const CURRENT_CHAIN = currentConfig.chain
+const USDC_ADDRESS = currentConfig.usdc
+const PAYMASTER_ADDRESS = process.env.PAYMASTER_ADDRESS || currentConfig.paymaster
+const RPC_URL = currentConfig.rpc
+
+console.log(`🌐 Network: ${NETWORK}`)
+console.log(`📍 USDC Address: ${USDC_ADDRESS}`)
+console.log(`📍 Paymaster Address: ${PAYMASTER_ADDRESS}`)
+console.log(`🔗 RPC URL: ${RPC_URL}`)
 
 // Paymaster 合约 ABI
 const PAYMASTER_ABI = [
@@ -155,7 +179,6 @@ const USDC_ABI = [
 
 // 环境变量
 const RELAYER_PRIVATE_KEY = process.env.RELAYER_PRIVATE_KEY
-const RPC_URL = process.env.RPC_URL || 'https://eth.llamarpc.com'
 
 // 延迟初始化客户端（用于 Serverless 环境）
 let relayerAccount = null
@@ -174,7 +197,7 @@ function initClients() {
   
   if (!publicClient) {
     publicClient = createPublicClient({
-      chain: mainnet,
+      chain: CURRENT_CHAIN,
       transport: http(RPC_URL),
     })
   }
@@ -182,7 +205,7 @@ function initClients() {
   if (!walletClient) {
     walletClient = createWalletClient({
       account: relayerAccount,
-      chain: mainnet,
+      chain: CURRENT_CHAIN,
       transport: http(RPC_URL),
     })
   }
