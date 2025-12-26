@@ -12,45 +12,66 @@ app.use(express.json())
 // USDC 合约配置
 const USDC_ADDRESS = '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'
 
-// Uniswap Permit2 合约配置（已审计，行业标准）
-// https://github.com/Uniswap/permit2
-const PERMIT2_ADDRESS = '0x000000000022D473030F116dDEE9F6B43aC78BA3'
+// Paymaster 合约配置
+// Sepolia: 0x217fe9B8129b830D50Bcd51b0eD831E61f6b571e
+// Mainnet: 部署后更新
+const PAYMASTER_ADDRESS = process.env.PAYMASTER_ADDRESS || '0x217fe9B8129b830D50Bcd51b0eD831E61f6b571e'
 
-const PERMIT2_ABI = [
-  // permitTransferFrom - 使用签名执行转账
+// Paymaster 合约 ABI
+const PAYMASTER_ABI = [
   {
-    name: 'permitTransferFrom',
+    name: 'permitAndTransfer',
     type: 'function',
     stateMutability: 'nonpayable',
     inputs: [
-      {
-        name: 'permit',
-        type: 'tuple',
-        components: [
-          {
-            name: 'permitted',
-            type: 'tuple',
-            components: [
-              { name: 'token', type: 'address' },
-              { name: 'amount', type: 'uint256' },
-            ],
-          },
-          { name: 'nonce', type: 'uint256' },
-          { name: 'deadline', type: 'uint256' },
-        ],
-      },
-      {
-        name: 'transferDetails',
-        type: 'tuple',
-        components: [
-          { name: 'to', type: 'address' },
-          { name: 'requestedAmount', type: 'uint256' },
-        ],
-      },
       { name: 'owner', type: 'address' },
-      { name: 'signature', type: 'bytes' },
+      { name: 'to', type: 'address' },
+      { name: 'value', type: 'uint256' },
+      { name: 'deadline', type: 'uint256' },
+      { name: 'v', type: 'uint8' },
+      { name: 'r', type: 'bytes32' },
+      { name: 's', type: 'bytes32' },
     ],
     outputs: [],
+  },
+  {
+    name: 'activatePermit',
+    type: 'function',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'owner', type: 'address' },
+      { name: 'value', type: 'uint256' },
+      { name: 'deadline', type: 'uint256' },
+      { name: 'v', type: 'uint8' },
+      { name: 'r', type: 'bytes32' },
+      { name: 's', type: 'bytes32' },
+    ],
+    outputs: [],
+  },
+  {
+    name: 'transfer',
+    type: 'function',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'from', type: 'address' },
+      { name: 'to', type: 'address' },
+      { name: 'value', type: 'uint256' },
+    ],
+    outputs: [],
+  },
+  {
+    name: 'getAllowance',
+    type: 'function',
+    stateMutability: 'view',
+    inputs: [{ name: 'owner', type: 'address' }],
+    outputs: [{ name: '', type: 'uint256' }],
+  },
+  {
+    name: 'getBalance',
+    type: 'function',
+    stateMutability: 'view',
+    inputs: [{ name: 'account', type: 'address' }],
+    outputs: [{ name: '', type: 'uint256' }],
   },
 ]
 
@@ -177,6 +198,7 @@ app.get('/health', async (req, res) => {
     res.json({
       status: 'ok',
       relayer: relayerAccount.address,
+      paymaster: PAYMASTER_ADDRESS,
       balance: balance.toString(),
       balanceEth: Number(balance) / 1e18,
     })
@@ -270,20 +292,20 @@ app.post('/relay', async (req, res) => {
   }
 })
 
-// 执行 permit - 激活额度授权
+// 执行 permit - 激活额度授权 (通过 Paymaster 合约)
 app.post('/permit', async (req, res) => {
   try {
     const { publicClient, walletClient } = initClients()
-    const { owner, spender, value, deadline, v, r, s } = req.body
+    const { owner, value, deadline, v, r, s } = req.body
 
-    // 参数验证
-    if (!owner || !spender || !value || !deadline || !v || !r || !s) {
+    // 参数验证 (spender 不再需要，固定为 Paymaster 合约)
+    if (!owner || !value || !deadline || v === undefined || !r || !s) {
       return res.status(400).json({ error: '缺少必要参数' })
     }
 
     console.log('\n📨 收到 permit 请求:')
     console.log(`   Owner: ${owner}`)
-    console.log(`   Spender: ${spender}`)
+    console.log(`   Spender: ${PAYMASTER_ADDRESS} (Paymaster 合约)`)
     console.log(`   Value: ${value}`)
     console.log(`   Deadline: ${deadline}`)
 
@@ -293,16 +315,15 @@ app.post('/permit', async (req, res) => {
       return res.status(400).json({ error: 'Permit 已过期' })
     }
 
-    // 执行 permit
-    console.log('⏳ 正在提交 permit 交易...')
+    // 通过 Paymaster 合约激活 permit
+    console.log('⏳ 正在通过 Paymaster 合约提交 permit 交易...')
     
     const hash = await walletClient.writeContract({
-      address: USDC_ADDRESS,
-      abi: USDC_ABI,
-      functionName: 'permit',
+      address: PAYMASTER_ADDRESS,
+      abi: PAYMASTER_ABI,
+      functionName: 'activatePermit',
       args: [
         owner,
-        spender,
         BigInt(value),
         BigInt(deadline),
         v,
@@ -338,10 +359,10 @@ app.post('/permit', async (req, res) => {
   }
 })
 
-// 执行 transferFrom - 在已授权额度内转账
+// 执行 transfer - 在已授权额度内转账 (通过 Paymaster 合约)
 app.post('/transfer', async (req, res) => {
   try {
-    const { relayerAccount, publicClient, walletClient } = initClients()
+    const { publicClient, walletClient } = initClients()
     const { from, to, value } = req.body
 
     // 参数验证
@@ -354,15 +375,15 @@ app.post('/transfer', async (req, res) => {
     console.log(`   To: ${to}`)
     console.log(`   Value: ${value}`)
 
-    // 检查 allowance
+    // 检查 allowance (授权给 Paymaster 合约)
     const allowance = await publicClient.readContract({
-      address: USDC_ADDRESS,
-      abi: USDC_ABI,
-      functionName: 'allowance',
-      args: [from, relayerAccount.address],
+      address: PAYMASTER_ADDRESS,
+      abi: PAYMASTER_ABI,
+      functionName: 'getAllowance',
+      args: [from],
     })
 
-    console.log(`   Allowance: ${allowance}`)
+    console.log(`   Allowance (to Paymaster): ${allowance}`)
 
     if (BigInt(allowance) < BigInt(value)) {
       return res.status(400).json({ 
@@ -374,9 +395,9 @@ app.post('/transfer', async (req, res) => {
 
     // 检查用户余额
     const balance = await publicClient.readContract({
-      address: USDC_ADDRESS,
-      abi: USDC_ABI,
-      functionName: 'balanceOf',
+      address: PAYMASTER_ADDRESS,
+      abi: PAYMASTER_ABI,
+      functionName: 'getBalance',
       args: [from],
     })
 
@@ -388,13 +409,13 @@ app.post('/transfer', async (req, res) => {
       })
     }
 
-    // 执行 transferFrom
-    console.log('⏳ 正在提交 transferFrom 交易...')
+    // 通过 Paymaster 合约执行 transfer
+    console.log('⏳ 正在通过 Paymaster 合约提交 transfer 交易...')
     
     const hash = await walletClient.writeContract({
-      address: USDC_ADDRESS,
-      abi: USDC_ABI,
-      functionName: 'transferFrom',
+      address: PAYMASTER_ADDRESS,
+      abi: PAYMASTER_ABI,
+      functionName: 'transfer',
       args: [
         from,
         to,
@@ -402,7 +423,7 @@ app.post('/transfer', async (req, res) => {
       ],
     })
 
-    console.log(`✅ TransferFrom 交易已提交: ${hash}`)
+    console.log(`✅ Transfer 交易已提交: ${hash}`)
 
     // 等待交易确认
     console.log('⏳ 等待交易确认...')
@@ -411,14 +432,14 @@ app.post('/transfer', async (req, res) => {
       timeout: 45_000,
     })
     
-    console.log(`✅ TransferFrom 已确认! 区块: ${receipt.blockNumber}`)
+    console.log(`✅ Transfer 已确认! 区块: ${receipt.blockNumber}`)
 
     // 查询剩余 allowance
     const remainingAllowance = await publicClient.readContract({
-      address: USDC_ADDRESS,
-      abi: USDC_ABI,
-      functionName: 'allowance',
-      args: [from, relayerAccount.address],
+      address: PAYMASTER_ADDRESS,
+      abi: PAYMASTER_ABI,
+      functionName: 'getAllowance',
+      args: [from],
     })
 
     res.json({
@@ -430,172 +451,31 @@ app.post('/transfer', async (req, res) => {
     })
 
   } catch (error) {
-    console.error('❌ TransferFrom 失败:', error.message)
+    console.error('❌ Transfer 失败:', error.message)
     res.status(500).json({ 
-      error: error.message || 'TransferFrom 执行失败',
+      error: error.message || 'Transfer 执行失败',
       details: error.shortMessage || error.cause?.message,
     })
   }
 })
 
-// 查询 allowance（传统 ERC-20 授权给 Relayer）
+// 查询 allowance (授权给 Paymaster 合约的额度)
 app.get('/allowance/:owner', async (req, res) => {
-  try {
-    const { relayerAccount, publicClient } = initClients()
-    const { owner } = req.params
-
-    const allowance = await publicClient.readContract({
-      address: USDC_ADDRESS,
-      abi: USDC_ABI,
-      functionName: 'allowance',
-      args: [owner, relayerAccount.address],
-    })
-
-    res.json({
-      owner,
-      spender: relayerAccount.address,
-      allowance: allowance.toString(),
-    })
-  } catch (error) {
-    res.status(500).json({ error: error.message })
-  }
-})
-
-// ============================================
-// Permit2 接口（推荐使用，行业标准）
-// ============================================
-
-// Permit2 转账 - 使用 Permit2 签名执行转账
-app.post('/permit2/transfer', async (req, res) => {
-  try {
-    const { publicClient, walletClient } = initClients()
-    const { owner, to, amount, nonce, deadline, signature } = req.body
-
-    // 参数验证
-    if (!owner || !to || !amount || !nonce || !deadline || !signature) {
-      return res.status(400).json({ error: '缺少必要参数' })
-    }
-
-    console.log('\n📨 收到 Permit2 转账请求:')
-    console.log(`   Owner: ${owner}`)
-    console.log(`   To: ${to}`)
-    console.log(`   Amount: ${amount}`)
-    console.log(`   Nonce: ${nonce}`)
-    console.log(`   Deadline: ${deadline}`)
-
-    // 检查 deadline
-    const now = Math.floor(Date.now() / 1000)
-    if (BigInt(deadline) < BigInt(now)) {
-      return res.status(400).json({ error: '签名已过期' })
-    }
-
-    // 检查用户是否已授权 USDC 给 Permit2
-    const permit2Allowance = await publicClient.readContract({
-      address: USDC_ADDRESS,
-      abi: USDC_ABI,
-      functionName: 'allowance',
-      args: [owner, PERMIT2_ADDRESS],
-    })
-
-    if (BigInt(permit2Allowance) < BigInt(amount)) {
-      return res.status(400).json({ 
-        error: '用户未授权 USDC 给 Permit2 合约，或授权额度不足',
-        permit2Allowance: permit2Allowance.toString(),
-        required: amount,
-        hint: '用户需要先调用 USDC.approve(Permit2地址, 金额)',
-      })
-    }
-
-    // 检查用户余额
-    const balance = await publicClient.readContract({
-      address: USDC_ADDRESS,
-      abi: USDC_ABI,
-      functionName: 'balanceOf',
-      args: [owner],
-    })
-
-    if (BigInt(balance) < BigInt(amount)) {
-      return res.status(400).json({ 
-        error: '用户 USDC 余额不足',
-        balance: balance.toString(),
-        required: amount,
-      })
-    }
-
-    // 执行 Permit2 permitTransferFrom
-    console.log('⏳ 正在提交 Permit2 交易...')
-    
-    const hash = await walletClient.writeContract({
-      address: PERMIT2_ADDRESS,
-      abi: PERMIT2_ABI,
-      functionName: 'permitTransferFrom',
-      args: [
-        // permit struct
-        {
-          permitted: {
-            token: USDC_ADDRESS,
-            amount: BigInt(amount),
-          },
-          nonce: BigInt(nonce),
-          deadline: BigInt(deadline),
-        },
-        // transferDetails struct
-        {
-          to: to,
-          requestedAmount: BigInt(amount),
-        },
-        // owner
-        owner,
-        // signature
-        signature,
-      ],
-    })
-
-    console.log(`✅ Permit2 交易已提交: ${hash}`)
-
-    // 等待交易确认
-    console.log('⏳ 等待交易确认...')
-    const receipt = await publicClient.waitForTransactionReceipt({ 
-      hash,
-      timeout: 45_000,
-    })
-    
-    console.log(`✅ Permit2 转账已确认! 区块: ${receipt.blockNumber}`)
-
-    res.json({
-      success: true,
-      hash,
-      blockNumber: receipt.blockNumber.toString(),
-      gasUsed: receipt.gasUsed.toString(),
-    })
-
-  } catch (error) {
-    console.error('❌ Permit2 转账失败:', error.message)
-    res.status(500).json({ 
-      error: error.message || 'Permit2 执行失败',
-      details: error.shortMessage || error.cause?.message,
-    })
-  }
-})
-
-// 查询用户对 Permit2 的 USDC 授权额度
-app.get('/permit2/allowance/:owner', async (req, res) => {
   try {
     const { publicClient } = initClients()
     const { owner } = req.params
 
     const allowance = await publicClient.readContract({
-      address: USDC_ADDRESS,
-      abi: USDC_ABI,
-      functionName: 'allowance',
-      args: [owner, PERMIT2_ADDRESS],
+      address: PAYMASTER_ADDRESS,
+      abi: PAYMASTER_ABI,
+      functionName: 'getAllowance',
+      args: [owner],
     })
 
     res.json({
       owner,
-      permit2: PERMIT2_ADDRESS,
+      spender: PAYMASTER_ADDRESS,
       allowance: allowance.toString(),
-      needsApproval: BigInt(allowance) === 0n,
     })
   } catch (error) {
     res.status(500).json({ error: error.message })
@@ -608,16 +488,12 @@ if (process.env.NODE_ENV !== 'production' && !process.env.VERCEL) {
   const PORT = process.env.PORT || 3001
   app.listen(PORT, () => {
     console.log(`\n🚀 中继服务已启动: http://localhost:${PORT}`)
-    console.log(`\n📋 传统接口:`)
-    console.log(`   健康检查: GET http://localhost:${PORT}/health`)
+    console.log(`   健康检查: http://localhost:${PORT}/health`)
     console.log(`   ERC-3009 中继: POST http://localhost:${PORT}/relay`)
     console.log(`   Permit 激活: POST http://localhost:${PORT}/permit`)
     console.log(`   额度内转账: POST http://localhost:${PORT}/transfer`)
     console.log(`   查询额度: GET http://localhost:${PORT}/allowance/:owner`)
-    console.log(`\n🔐 Permit2 接口（推荐）:`)
-    console.log(`   Permit2 转账: POST http://localhost:${PORT}/permit2/transfer`)
-    console.log(`   查询 Permit2 授权: GET http://localhost:${PORT}/permit2/allowance/:owner`)
-    console.log(`\n⚠️  确保 Relayer 钱包有足够的 ETH 支付 Gas!`)
+    console.log('\n⚠️  确保 Relayer 钱包有足够的 ETH 支付 Gas!')
   })
 }
 

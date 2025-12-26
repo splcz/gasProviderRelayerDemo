@@ -18,3 +18,8 @@ Thumbs.db
 *.swp
 *.swo
 
+# Hardhat
+cache/
+artifacts/
+typechain-types/
+
