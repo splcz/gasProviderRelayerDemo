@@ -11,6 +11,49 @@ app.use(express.json())
 
 // USDC 合约配置
 const USDC_ADDRESS = '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'
+
+// Uniswap Permit2 合约配置（已审计，行业标准）
+// https://github.com/Uniswap/permit2
+const PERMIT2_ADDRESS = '0x000000000022D473030F116dDEE9F6B43aC78BA3'
+
+const PERMIT2_ABI = [
+  // permitTransferFrom - 使用签名执行转账
+  {
+    name: 'permitTransferFrom',
+    type: 'function',
+    stateMutability: 'nonpayable',
+    inputs: [
+      {
+        name: 'permit',
+        type: 'tuple',
+        components: [
+          {
+            name: 'permitted',
+            type: 'tuple',
+            components: [
+              { name: 'token', type: 'address' },
+              { name: 'amount', type: 'uint256' },
+            ],
+          },
+          { name: 'nonce', type: 'uint256' },
+          { name: 'deadline', type: 'uint256' },
+        ],
+      },
+      {
+        name: 'transferDetails',
+        type: 'tuple',
+        components: [
+          { name: 'to', type: 'address' },
+          { name: 'requestedAmount', type: 'uint256' },
+        ],
+      },
+      { name: 'owner', type: 'address' },
+      { name: 'signature', type: 'bytes' },
+    ],
+    outputs: [],
+  },
+]
+
 const USDC_ABI = [
   // ERC-3009: transferWithAuthorization
   {
@@ -395,7 +438,7 @@ app.post('/transfer', async (req, res) => {
   }
 })
 
-// 查询 allowance
+// 查询 allowance（传统 ERC-20 授权给 Relayer）
 app.get('/allowance/:owner', async (req, res) => {
   try {
     const { relayerAccount, publicClient } = initClients()
@@ -418,18 +461,163 @@ app.get('/allowance/:owner', async (req, res) => {
   }
 })
 
+// ============================================
+// Permit2 接口（推荐使用，行业标准）
+// ============================================
+
+// Permit2 转账 - 使用 Permit2 签名执行转账
+app.post('/permit2/transfer', async (req, res) => {
+  try {
+    const { publicClient, walletClient } = initClients()
+    const { owner, to, amount, nonce, deadline, signature } = req.body
+
+    // 参数验证
+    if (!owner || !to || !amount || !nonce || !deadline || !signature) {
+      return res.status(400).json({ error: '缺少必要参数' })
+    }
+
+    console.log('\n📨 收到 Permit2 转账请求:')
+    console.log(`   Owner: ${owner}`)
+    console.log(`   To: ${to}`)
+    console.log(`   Amount: ${amount}`)
+    console.log(`   Nonce: ${nonce}`)
+    console.log(`   Deadline: ${deadline}`)
+
+    // 检查 deadline
+    const now = Math.floor(Date.now() / 1000)
+    if (BigInt(deadline) < BigInt(now)) {
+      return res.status(400).json({ error: '签名已过期' })
+    }
+
+    // 检查用户是否已授权 USDC 给 Permit2
+    const permit2Allowance = await publicClient.readContract({
+      address: USDC_ADDRESS,
+      abi: USDC_ABI,
+      functionName: 'allowance',
+      args: [owner, PERMIT2_ADDRESS],
+    })
+
+    if (BigInt(permit2Allowance) < BigInt(amount)) {
+      return res.status(400).json({ 
+        error: '用户未授权 USDC 给 Permit2 合约，或授权额度不足',
+        permit2Allowance: permit2Allowance.toString(),
+        required: amount,
+        hint: '用户需要先调用 USDC.approve(Permit2地址, 金额)',
+      })
+    }
+
+    // 检查用户余额
+    const balance = await publicClient.readContract({
+      address: USDC_ADDRESS,
+      abi: USDC_ABI,
+      functionName: 'balanceOf',
+      args: [owner],
+    })
+
+    if (BigInt(balance) < BigInt(amount)) {
+      return res.status(400).json({ 
+        error: '用户 USDC 余额不足',
+        balance: balance.toString(),
+        required: amount,
+      })
+    }
+
+    // 执行 Permit2 permitTransferFrom
+    console.log('⏳ 正在提交 Permit2 交易...')
+    
+    const hash = await walletClient.writeContract({
+      address: PERMIT2_ADDRESS,
+      abi: PERMIT2_ABI,
+      functionName: 'permitTransferFrom',
+      args: [
+        // permit struct
+        {
+          permitted: {
+            token: USDC_ADDRESS,
+            amount: BigInt(amount),
+          },
+          nonce: BigInt(nonce),
+          deadline: BigInt(deadline),
+        },
+        // transferDetails struct
+        {
+          to: to,
+          requestedAmount: BigInt(amount),
+        },
+        // owner
+        owner,
+        // signature
+        signature,
+      ],
+    })
+
+    console.log(`✅ Permit2 交易已提交: ${hash}`)
+
+    // 等待交易确认
+    console.log('⏳ 等待交易确认...')
+    const receipt = await publicClient.waitForTransactionReceipt({ 
+      hash,
+      timeout: 45_000,
+    })
+    
+    console.log(`✅ Permit2 转账已确认! 区块: ${receipt.blockNumber}`)
+
+    res.json({
+      success: true,
+      hash,
+      blockNumber: receipt.blockNumber.toString(),
+      gasUsed: receipt.gasUsed.toString(),
+    })
+
+  } catch (error) {
+    console.error('❌ Permit2 转账失败:', error.message)
+    res.status(500).json({ 
+      error: error.message || 'Permit2 执行失败',
+      details: error.shortMessage || error.cause?.message,
+    })
+  }
+})
+
+// 查询用户对 Permit2 的 USDC 授权额度
+app.get('/permit2/allowance/:owner', async (req, res) => {
+  try {
+    const { publicClient } = initClients()
+    const { owner } = req.params
+
+    const allowance = await publicClient.readContract({
+      address: USDC_ADDRESS,
+      abi: USDC_ABI,
+      functionName: 'allowance',
+      args: [owner, PERMIT2_ADDRESS],
+    })
+
+    res.json({
+      owner,
+      permit2: PERMIT2_ADDRESS,
+      allowance: allowance.toString(),
+      needsApproval: BigInt(allowance) === 0n,
+    })
+  } catch (error) {
+    res.status(500).json({ error: error.message })
+  }
+})
+
 // 本地开发时启动服务器
 // Vercel 环境下不需要 listen，直接导出 app
 if (process.env.NODE_ENV !== 'production' && !process.env.VERCEL) {
   const PORT = process.env.PORT || 3001
   app.listen(PORT, () => {
     console.log(`\n🚀 中继服务已启动: http://localhost:${PORT}`)
-    console.log(`   健康检查: http://localhost:${PORT}/health`)
+    console.log(`\n📋 传统接口:`)
+    console.log(`   健康检查: GET http://localhost:${PORT}/health`)
     console.log(`   ERC-3009 中继: POST http://localhost:${PORT}/relay`)
     console.log(`   Permit 激活: POST http://localhost:${PORT}/permit`)
     console.log(`   额度内转账: POST http://localhost:${PORT}/transfer`)
     console.log(`   查询额度: GET http://localhost:${PORT}/allowance/:owner`)
-    console.log('\n⚠️  确保 Relayer 钱包有足够的 ETH 支付 Gas!')
+    console.log(`\n🔐 Permit2 接口（推荐）:`)
+    console.log(`   Permit2 转账: POST http://localhost:${PORT}/permit2/transfer`)
+    console.log(`   查询 Permit2 授权: GET http://localhost:${PORT}/permit2/allowance/:owner`)
+    console.log(`\n⚠️  确保 Relayer 钱包有足够的 ETH 支付 Gas!`)
   })
 }
 

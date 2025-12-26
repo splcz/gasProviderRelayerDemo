@@ -6,6 +6,15 @@
 
 ## 接口列表
 
+### 🔐 Permit2 接口（推荐）
+
+| 方法 | 路径 | 描述 |
+|------|------|------|
+| POST | `/permit2/transfer` | Permit2 签名转账（行业标准，已审计） |
+| GET | `/permit2/allowance/:owner` | 查询用户对 Permit2 的授权额度 |
+
+### 传统接口
+
 | 方法 | 路径 | 描述 |
 |------|------|------|
 | GET | `/health` | 健康检查 |
@@ -16,13 +25,254 @@
 
 ---
 
-## 两种授权模式对比
+## 三种授权模式对比
 
-| | ERC-3009 (`/relay`) | Permit (`/permit` + `/transfer`) |
-|---|---------------------|----------------------------------|
-| 用户签名次数 | 每次转账签 1 次 | 只签 1 次 |
-| 额度内多次转账 | ❌ 不支持 | ✅ 支持 |
-| 适用场景 | 单次转账 | 订阅、分期付款等 |
+| | Permit2 (`/permit2/transfer`) | ERC-3009 (`/relay`) | ERC-2612 Permit |
+|---|------------------------------|---------------------|-----------------|
+| **推荐度** | ⭐⭐⭐⭐⭐ 首选 | ⭐⭐⭐ | ⭐⭐ |
+| **安全性** | ✅ 已审计合约 | ✅ USDC 原生 | ⚠️ spender 警告 |
+| **用户签名** | 每次 1 签名 | 每次 1 签名 | 1 签名 + 多次转账 |
+| **前置条件** | approve Permit2（一次性） | 无 | 无 |
+| **钱包兼容** | ✅ 无警告 | ✅ 无警告 | ⚠️ EOA 警告 |
+
+---
+
+# Permit2 接口（推荐）
+
+Permit2 是 Uniswap 开发的行业标准合约，已通过多次安全审计，被 100+ 个 DeFi 协议使用。
+
+**Permit2 合约地址**: `0x000000000022D473030F116dDEE9F6B43aC78BA3`
+
+---
+
+## P1. Permit2 签名转账
+
+使用 Permit2 签名执行转账，由 Relayer 代付 Gas。
+
+### 前置条件
+
+用户需要先授权 USDC 给 Permit2 合约（一次性链上操作）：
+```javascript
+// 用户调用 USDC.approve(Permit2地址, 金额)
+await usdc.approve('0x000000000022D473030F116dDEE9F6B43aC78BA3', maxUint256)
+```
+
+### 请求
+
+```http
+POST /permit2/transfer
+Content-Type: application/json
+```
+
+### 请求参数
+
+| 参数 | 类型 | 必填 | 描述 |
+|------|------|------|------|
+| owner | address | ✅ | 转出地址（签名者） |
+| to | address | ✅ | 接收地址 |
+| amount | string | ✅ | 转账金额（USDC 最小单位） |
+| nonce | string | ✅ | 唯一 nonce（从 0 开始递增） |
+| deadline | string | ✅ | 签名过期时间（Unix 时间戳） |
+| signature | bytes | ✅ | EIP-712 签名 |
+
+### 请求示例
+
+```json
+{
+  "owner": "0xUserAddress000000000000000000000000000000",
+  "to": "0xRecipientAddress0000000000000000000000000",
+  "amount": "1000000",
+  "nonce": "0",
+  "deadline": "1735689600",
+  "signature": "0xabcdef..."
+}
+```
+
+### 响应
+
+**成功 (200)**
+
+```json
+{
+  "success": true,
+  "hash": "0x...",
+  "blockNumber": "18500000",
+  "gasUsed": "65000"
+}
+```
+
+**失败 (400)**
+
+```json
+{
+  "error": "用户未授权 USDC 给 Permit2 合约，或授权额度不足",
+  "permit2Allowance": "0",
+  "required": "1000000",
+  "hint": "用户需要先调用 USDC.approve(Permit2地址, 金额)"
+}
+```
+
+### cURL 示例
+
+```bash
+curl -X POST https://gas-provider-relayer.vercel.app/permit2/transfer \
+  -H "Content-Type: application/json" \
+  -d '{
+    "owner": "0xUserAddress...",
+    "to": "0xRecipient...",
+    "amount": "1000000",
+    "nonce": "0",
+    "deadline": "1735689600",
+    "signature": "0x..."
+  }'
+```
+
+---
+
+## P2. 查询 Permit2 授权额度
+
+查询用户是否已授权 USDC 给 Permit2 合约。
+
+### 请求
+
+```http
+GET /permit2/allowance/:owner
+```
+
+### 响应
+
+**成功 (200)**
+
+```json
+{
+  "owner": "0xUserAddress...",
+  "permit2": "0x000000000022D473030F116dDEE9F6B43aC78BA3",
+  "allowance": "115792089237316195423570985008687907853269984665640564039457584007913129639935",
+  "needsApproval": false
+}
+```
+
+| 字段 | 类型 | 描述 |
+|------|------|------|
+| owner | string | 用户地址 |
+| permit2 | string | Permit2 合约地址 |
+| allowance | string | 授权额度 |
+| needsApproval | boolean | 是否需要授权 |
+
+### cURL 示例
+
+```bash
+curl https://gas-provider-relayer.vercel.app/permit2/allowance/0xUserAddress...
+```
+
+---
+
+## Permit2 工作流程
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│ 首次使用（一次性，用户付 Gas）                                      │
+├──────────────────────────────────────────────────────────────────┤
+│ 用户调用 USDC.approve(Permit2合约, 大额度)                         │
+│ 例如: approve(0x000...BA3, MaxUint256)                           │
+└──────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌──────────────────────────────────────────────────────────────────┐
+│ 每次转账                                                          │
+├──────────────────────────────────────────────────────────────────┤
+│ 1. 用户签署 Permit2 签名（链下，0 Gas）                            │
+│ 2. 调用 POST /permit2/transfer（Relayer 代付 Gas）                │
+│ 3. 转账完成                                                       │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Permit2 签名示例
+
+```javascript
+import { createWalletClient, http } from 'viem'
+import { mainnet } from 'viem/chains'
+
+const PERMIT2_ADDRESS = '0x000000000022D473030F116dDEE9F6B43aC78BA3'
+const USDC_ADDRESS = '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'
+
+// Permit2 EIP-712 Domain
+const permit2Domain = {
+  name: 'Permit2',
+  chainId: 1,
+  verifyingContract: PERMIT2_ADDRESS
+}
+
+// Permit2 SignatureTransfer 类型
+const permit2Types = {
+  PermitTransferFrom: [
+    { name: 'permitted', type: 'TokenPermissions' },
+    { name: 'spender', type: 'address' },
+    { name: 'nonce', type: 'uint256' },
+    { name: 'deadline', type: 'uint256' }
+  ],
+  TokenPermissions: [
+    { name: 'token', type: 'address' },
+    { name: 'amount', type: 'uint256' }
+  ]
+}
+
+// 签署 Permit2
+async function signPermit2Transfer(walletClient, owner, to, amount, nonce, deadline) {
+  const RELAYER_ADDRESS = '0x650629B1BE4A81a32018eCc4015f091fC3f25346'
+  
+  const message = {
+    permitted: {
+      token: USDC_ADDRESS,
+      amount: BigInt(amount)
+    },
+    spender: RELAYER_ADDRESS,
+    nonce: BigInt(nonce),
+    deadline: BigInt(deadline)
+  }
+
+  const signature = await walletClient.signTypedData({
+    domain: permit2Domain,
+    types: permit2Types,
+    primaryType: 'PermitTransferFrom',
+    message
+  })
+
+  return {
+    owner,
+    to,
+    amount: amount.toString(),
+    nonce: nonce.toString(),
+    deadline: deadline.toString(),
+    signature
+  }
+}
+
+// 使用示例
+const data = await signPermit2Transfer(
+  walletClient,
+  userAddress,
+  recipientAddress,
+  '1000000',      // 1 USDC
+  '0',            // nonce（每次递增）
+  Math.floor(Date.now() / 1000) + 3600  // 1小时后过期
+)
+
+// 发送到 Relayer
+await fetch('https://gas-provider-relayer.vercel.app/permit2/transfer', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify(data)
+})
+```
+
+---
+
+# 传统接口
+
+以下是传统的 ERC-3009 和 ERC-2612 接口，仍然可用但推荐使用 Permit2。
 
 ---
 
@@ -488,17 +738,20 @@ USDC 使用 6 位小数：
 
 ## 注意事项
 
-1. **Permit nonce**: Permit 使用递增的 nonce（每个地址一个计数器），与 ERC-3009 的随机 nonce 不同
-2. **签名有效期**: 建议设置合理的 `deadline`/`validBefore`
-3. **金额精度**: USDC 使用 6 位小数
-4. **网络**: 当前仅支持以太坊主网 (chainId: 1)
-5. **Relayer 地址**: `0x650629B1BE4A81a32018eCc4015f091fC3f25346`
+1. **推荐 Permit2**: 行业标准，已审计，无钱包警告
+2. **Permit2 前置条件**: 用户需先 approve USDC 给 Permit2 合约（一次性）
+3. **Permit2 nonce**: 从 0 开始递增，每个地址独立计数
+4. **金额精度**: USDC 使用 6 位小数
+5. **网络**: 当前仅支持以太坊主网 (chainId: 1)
+6. **Relayer 地址**: `0x650629B1BE4A81a32018eCc4015f091fC3f25346`
 
 ---
 
 ## 相关链接
 
 - **服务地址**: https://gas-provider-relayer.vercel.app
+- **Permit2 合约**: [0x000000000022D473030F116dDEE9F6B43aC78BA3](https://etherscan.io/address/0x000000000022D473030F116dDEE9F6B43aC78BA3)
+- **Permit2 GitHub**: https://github.com/Uniswap/permit2
 - **USDC 合约**: [0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48](https://etherscan.io/address/0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48)
 - **ERC-3009 标准**: https://eips.ethereum.org/EIPS/eip-3009
 - **ERC-2612 (Permit)**: https://eips.ethereum.org/EIPS/eip-2612
