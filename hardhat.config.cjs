@@ -1,5 +1,6 @@
 require("dotenv/config");
 require("@nomicfoundation/hardhat-ethers");
+require("@nomicfoundation/hardhat-verify");
 
 /** @type import('hardhat/config').HardhatUserConfig */
 module.exports = {
@@ -36,28 +37,10 @@ module.exports = {
     },
   },
   etherscan: {
-    apiKey: {
-      base: process.env.ETHERSCAN_API_KEY || "",
-      baseSepolia: process.env.ETHERSCAN_API_KEY || "",
-    },
-    customChains: [
-      {
-        network: "base",
-        chainId: 8453,
-        urls: {
-          apiURL: "https://api.basescan.org/api",
-          browserURL: "https://basescan.org",
-        },
-      },
-      {
-        network: "baseSepolia",
-        chainId: 84532,
-        urls: {
-          apiURL: "https://api-sepolia.basescan.org/api",
-          browserURL: "https://sepolia.basescan.org",
-        },
-      },
-    ],
+    apiKey: process.env.ETHERSCAN_API_KEY || "",
+  },
+  sourcify: {
+    enabled: false,
   },
   paths: {
     sources: "./contracts",
