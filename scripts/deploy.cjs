@@ -5,12 +5,12 @@ async function main() {
   const network = hre.network.name;
   let USDC_ADDRESS;
 
-  if (network === "mainnet") {
-    // 以太坊主网 USDC
-    USDC_ADDRESS = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";
-  } else if (network === "sepolia") {
-    // Sepolia 测试网 USDC (Circle 官方测试合约)
-    USDC_ADDRESS = "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238";
+  if (network === "base") {
+    // Base 主网 USDC (Circle 官方)
+    USDC_ADDRESS = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+  } else if (network === "baseSepolia") {
+    // Base Sepolia 测试网 USDC
+    USDC_ADDRESS = "0x036CbD53842c5426634e7929541eC2318f3dCF7e";
   } else {
     throw new Error(`Unsupported network: ${network}`);
   }
@@ -50,8 +50,8 @@ async function main() {
   console.log(`   const PAYMASTER_ADDRESS = '${paymasterAddress}'`);
   console.log("\n2. Update RELAYER_ADDRESS in frontend config:");
   console.log(`   export const RELAYER_ADDRESS = '${paymasterAddress}'`);
-  console.log("\n3. Verify contract on Etherscan:");
-  console.log(`   npx hardhat verify --network mainnet ${paymasterAddress} ${USDC_ADDRESS} ${deployer.address}`);
+  console.log("\n3. Verify contract on BaseScan:");
+  console.log(`   npx hardhat verify --network ${network} ${paymasterAddress} ${USDC_ADDRESS} ${deployer.address}`);
 
   return paymasterAddress;
 }

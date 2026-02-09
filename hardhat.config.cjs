@@ -13,22 +13,22 @@ module.exports = {
     },
   },
   networks: {
-    // 以太坊主网
-    mainnet: {
-      url: process.env.RPC_URL || "https://eth.llamarpc.com",
+    // Base 主网
+    base: {
+      url: process.env.BASE_RPC_URL || "https://mainnet.base.org",
       accounts: process.env.RELAYER_PRIVATE_KEY 
         ? [process.env.RELAYER_PRIVATE_KEY] 
         : [],
-      chainId: 1,
+      chainId: 8453,
     },
-    // Sepolia 测试网
-    sepolia: {
-      url: process.env.SEPOLIA_RPC_URL || "https://eth-sepolia.g.alchemy.com/v2/JDtZbw6v54UHv874deptO",
+    // Base Sepolia 测试网
+    baseSepolia: {
+      url: process.env.BASE_SEPOLIA_RPC_URL || "https://sepolia.base.org",
       accounts: process.env.RELAYER_PRIVATE_KEY 
         ? [process.env.RELAYER_PRIVATE_KEY] 
         : [],
-      chainId: 11155111,
-      timeout: 60000, // 60秒超时
+      chainId: 84532,
+      timeout: 60000,
     },
     // 本地测试网络
     hardhat: {
@@ -36,7 +36,28 @@ module.exports = {
     },
   },
   etherscan: {
-    apiKey: process.env.ETHERSCAN_API_KEY || "",
+    apiKey: {
+      base: process.env.ETHERSCAN_API_KEY || "",
+      baseSepolia: process.env.ETHERSCAN_API_KEY || "",
+    },
+    customChains: [
+      {
+        network: "base",
+        chainId: 8453,
+        urls: {
+          apiURL: "https://api.basescan.org/api",
+          browserURL: "https://basescan.org",
+        },
+      },
+      {
+        network: "baseSepolia",
+        chainId: 84532,
+        urls: {
+          apiURL: "https://api-sepolia.basescan.org/api",
+          browserURL: "https://sepolia.basescan.org",
+        },
+      },
+    ],
   },
   paths: {
     sources: "./contracts",

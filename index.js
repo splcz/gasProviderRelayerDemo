@@ -3,34 +3,34 @@ import express from 'express'
 import cors from 'cors'
 import { createPublicClient, createWalletClient, http } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
-import { mainnet, sepolia } from 'viem/chains'
+import { base, baseSepolia } from 'viem/chains'
 
 const app = express()
 app.use(cors())
 app.use(express.json())
 
 // ============ 多网络配置 ============
-// 通过环境变量 NETWORK 切换：'mainnet' 或 'sepolia'
-const NETWORK = process.env.NETWORK || 'sepolia'
+// 通过环境变量 NETWORK 切换：'base' 或 'baseSepolia'
+const NETWORK = process.env.NETWORK || 'base'
 
 // 网络配置映射
 const NETWORK_CONFIG = {
-  mainnet: {
-    chain: mainnet,
-    usdc: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
-    paymaster: process.env.PAYMASTER_ADDRESS_MAINNET || '0x0000000000000000000000000000000000000000',
-    rpc: process.env.RPC_URL || 'https://eth.llamarpc.com',
+  base: {
+    chain: base,
+    usdc: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+    paymaster: process.env.PAYMASTER_ADDRESS_BASE || '0x217fe9B8129b830D50Bcd51b0eD831E61f6b571e',
+    rpc: process.env.BASE_RPC_URL || 'https://mainnet.base.org',
   },
-  sepolia: {
-    chain: sepolia,
-    usdc: '0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238',
-    paymaster: process.env.PAYMASTER_ADDRESS_SEPOLIA || '0x217fe9B8129b830D50Bcd51b0eD831E61f6b571e',
-    rpc: process.env.SEPOLIA_RPC_URL || 'https://eth-sepolia.g.alchemy.com/v2/JDtZbw6v54UHv874deptO',
+  baseSepolia: {
+    chain: baseSepolia,
+    usdc: '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
+    paymaster: process.env.PAYMASTER_ADDRESS_BASE_SEPOLIA || '0xE004eB206f7D26CD0E3d69eDB85814Cc137Ae9D9',
+    rpc: process.env.BASE_SEPOLIA_RPC_URL || 'https://sepolia.base.org',
   },
 }
 
 // 当前网络配置
-const currentConfig = NETWORK_CONFIG[NETWORK] || NETWORK_CONFIG.sepolia
+const currentConfig = NETWORK_CONFIG[NETWORK] || NETWORK_CONFIG.base
 const CURRENT_CHAIN = currentConfig.chain
 const USDC_ADDRESS = currentConfig.usdc
 const PAYMASTER_ADDRESS = process.env.PAYMASTER_ADDRESS || currentConfig.paymaster
